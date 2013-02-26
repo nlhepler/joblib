@@ -463,41 +463,41 @@ class Parallel(Logger):
             n_jobs = max(multiprocessing.cpu_count() + 1 + n_jobs, 1)
 
         # The list of exceptions that we will capture
+        daemonic = multiprocessing.current_process()._daemonic
         self.exceptions = [TransportableException]
-        if n_jobs is None or multiprocessing is None or n_jobs == 1:
+        if n_jobs is None or multiprocessing is None or n_jobs == 1 or daemonic:
             n_jobs = 1
             self._pool = None
-        else:
-            if multiprocessing.current_process()._daemonic:
-                # Daemonic processes cannot have children
-                n_jobs = 1
-                self._pool = None
+            # since we have no pool, run the initializer
+            self._initializer(*self._initargs)
+            # Daemonic processes cannot have children
+            if daemonic:
                 warnings.warn(
                     'Parallel loops cannot be nested, setting n_jobs=1',
                     stacklevel=2)
-            else:
-                already_forked = int(os.environ.get('__JOBLIB_SPAWNED_PARALLEL__', 0))
-                if already_forked:
-                    raise ImportError('[joblib] Attempting to do parallel computing'
-                            'without protecting your import on a system that does '
-                            'not support forking. To use parallel-computing in a '
-                            'script, you must protect you main loop using "if '
-                            "__name__ == '__main__'"
-                            '". Please see the joblib documentation on Parallel '
-                            'for more information'
-                        )
-
-                # Set an environment variable to avoid infinite loops
-                os.environ['__JOBLIB_SPAWNED_PARALLEL__'] = '1'
-                self._pool = multiprocessing.Pool(
-                    n_jobs,
-                    self._initializer,
-                    self._initargs
+        else:
+            already_forked = int(os.environ.get('__JOBLIB_SPAWNED_PARALLEL__', 0))
+            if already_forked:
+                raise ImportError('[joblib] Attempting to do parallel computing'
+                        'without protecting your import on a system that does '
+                        'not support forking. To use parallel-computing in a '
+                        'script, you must protect you main loop using "if '
+                        "__name__ == '__main__'"
+                        '". Please see the joblib documentation on Parallel '
+                        'for more information'
                     )
-                self._lock = threading.Lock()
-                # We are using multiprocessing, we also want to capture
-                # KeyboardInterrupts
-                self.exceptions.extend([KeyboardInterrupt, WorkerInterrupt])
+
+            # Set an environment variable to avoid infinite loops
+            os.environ['__JOBLIB_SPAWNED_PARALLEL__'] = '1'
+            self._pool = multiprocessing.Pool(
+                n_jobs,
+                self._initializer,
+                self._initargs
+                )
+            self._lock = threading.Lock()
+            # We are using multiprocessing, we also want to capture
+            # KeyboardInterrupts
+            self.exceptions.extend([KeyboardInterrupt, WorkerInterrupt])
 
         pre_dispatch = self.pre_dispatch
         if isinstance(iterable, list):
