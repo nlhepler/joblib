@@ -249,13 +249,13 @@ class Parallel(Logger):
          /usr/lib/python2.7/heapq.pyc in nlargest(n=2, iterable=3, key=None)
              419         if n >= size:
              420             return sorted(iterable, key=key, reverse=True)[:n]
-             421 
+             421
              422     # When key is none, use simpler decoration
              423     if key is None:
          --> 424         it = izip(iterable, count(0,-1))                    # decorate
              425         result = _nlargest(n, it)
              426         return map(itemgetter(0), result)                   # undecorate
-             427 
+             427
              428     # General case, slowest method
 
          TypeError: izip argument #1 must support iteration
@@ -291,14 +291,15 @@ class Parallel(Logger):
          [Parallel(n_jobs=2)]: Done   5 out of   6 | elapsed:    0.0s remaining:    0.0s
          [Parallel(n_jobs=2)]: Done   6 out of   6 | elapsed:    0.0s finished
     '''
-    def __init__(self, n_jobs=1, verbose=0, pre_dispatch='all'):
+    def __init__(self, n_jobs=1, verbose=0, pre_dispatch='all', initializer=None, initargs=[]):
         self.verbose = verbose
         self.n_jobs = n_jobs
         self.pre_dispatch = pre_dispatch
         self._pool = None
+        self._initializer = initializer
+        self._initargs = initargs
         # Not starting the pool in the __init__ is a design decision, to be
         # able to close it ASAP, and not burden the user with closing it.
-        self._output = None
         self._jobs = list()
         # A flag used to abort the dispatching of jobs in case an
         # exception is found
@@ -405,7 +406,6 @@ class Parallel(Logger):
                         ))
 
     def retrieve(self):
-        self._output = list()
         while self._jobs:
             # We need to be careful: the job queue can be filling up as
             # we empty it
@@ -415,7 +415,7 @@ class Parallel(Logger):
             if hasattr(self, '_lock'):
                 self._lock.release()
             try:
-                self._output.append(job.get())
+                yield job.get()
             except tuple(self.exceptions) as exception:
                 try:
                     self._aborting = True
@@ -451,7 +451,7 @@ class Parallel(Logger):
                 finally:
                     self._lock.release()
 
-    def __call__(self, iterable):
+    def lazy(self, iterable):
         if self._jobs:
             raise ValueError('This Parallel instance is already running')
         n_jobs = self.n_jobs
@@ -485,7 +485,11 @@ class Parallel(Logger):
 
                 # Set an environment variable to avoid infinite loops
                 os.environ['__JOBLIB_SPAWNED_PARALLEL__'] = '1'
-                self._pool = multiprocessing.Pool(n_jobs)
+                self._pool = multiprocessing.Pool(
+                    n_jobs,
+                    self._initializer,
+                    self._initargs
+                    )
                 self._lock = threading.Lock()
                 # We are using multiprocessing, we also want to capture
                 # KeyboardInterrupts
@@ -513,12 +517,15 @@ class Parallel(Logger):
             for function, args, kwargs in iterable:
                 self.dispatch(function, args, kwargs)
 
-            self.retrieve()
+            for result in self.retrieve():
+                yield result
+
             # Make sure that we get a last message telling us we are done
             elapsed_time = time.time() - self._start_time
             self._print('Done %3i out of %3i | elapsed: %s finished',
-                        (len(self._output),
-                         len(self._output),
+                        (
+                            self.n_dispatched,
+                            self.n_dispatched,
                             short_format_time(elapsed_time)
                         ))
 
@@ -528,9 +535,9 @@ class Parallel(Logger):
                 self._pool.join()
                 os.environ.pop('__JOBLIB_SPAWNED_PARALLEL__', 0)
             self._jobs = list()
-        output = self._output
-        self._output = None
-        return output
+
+    def __call__(self, iterable):
+        return list(self.lazy(iterable))
 
     def __repr__(self):
         return '%s(n_jobs=%s)' % (self.__class__.__name__, self.n_jobs)
