@@ -469,7 +469,8 @@ class Parallel(Logger):
             n_jobs = 1
             self._pool = None
             # since we have no pool, run the initializer
-            self._initializer(*self._initargs)
+            if self._initializer is not None:
+                self._initializer(*self._initargs)
             # Daemonic processes cannot have children
             if daemonic:
                 warnings.warn(
