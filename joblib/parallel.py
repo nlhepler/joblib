@@ -300,6 +300,7 @@ class Parallel(Logger):
         self._initargs = initargs
         # Not starting the pool in the __init__ is a design decision, to be
         # able to close it ASAP, and not burden the user with closing it.
+        self._output = None
         self._jobs = list()
         # A flag used to abort the dispatching of jobs in case an
         # exception is found
@@ -405,7 +406,7 @@ class Parallel(Logger):
                          short_format_time(remaining_time),
                         ))
 
-    def retrieve(self):
+    def _retrieve(self):
         while self._jobs:
             # We need to be careful: the job queue can be filling up as
             # we empty it
@@ -450,6 +451,9 @@ class Parallel(Logger):
                     raise exception
                 finally:
                     self._lock.release()
+
+    def retrieve(self):
+        self._output = list(self._retrieve())
 
     def lazy(self, iterable):
         if self._jobs:
@@ -517,7 +521,7 @@ class Parallel(Logger):
             for function, args, kwargs in iterable:
                 self.dispatch(function, args, kwargs)
 
-            for result in self.retrieve():
+            for result in self._retrieve():
                 yield result
 
             # Make sure that we get a last message telling us we are done
@@ -537,6 +541,7 @@ class Parallel(Logger):
             self._jobs = list()
 
     def __call__(self, iterable):
+        self._output = None  # preserve prior semantics
         return list(self.lazy(iterable))
 
     def __repr__(self):
